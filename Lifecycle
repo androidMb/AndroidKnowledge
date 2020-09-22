@@ -1,0 +1,116 @@
+Q:Jetpack 核心组件库中的Lifecycle 组件：
+如何利用 Lifecycle 组件观察宿主生命周期的变化？ 
+Fragment和Activity 是如何实现 Lifecycle 能力的？ 
+Lifecycle 又是如何根据宿主状态分发事件给观察者的？
+
+A:********************************************************
+
+*什么是 Lifecycle ？
+Lifecycle 是具备宿主生命周期感知能力的组件。它能持有组件（如 Activity 或 Fragment）生命周期状态的信息，并且允许其他观察者监听宿主的状态。
+它也是 Jetpack 组件库的的核心基础，包括LiveData,ViewModel组件等也都是基于它来实现的。
+
+*Lifecycle 的三种写法
+Lifecycle 有三种实现方法，下面我们一一来介绍一下：
+
+使用 Lifecycle 前需要先添加依赖：
+
+ //通常情况下，只需要添加appcompat就可以了
+api 'androidx.appcompat:appcompat:1.1.0'
+ //如果想单独使用，可引入下面这个依赖
+api 'androidx.lifecycle:lifecycle-common:2.1.0'
+
+LifecycleObserver 配合注解：
+
+//1. 自定义的LifecycleObserver观察者，在对应方法上用注解声明想要观  察的宿主的生命周期事件即可
+class LocationObserver extends LifecycleObserver{
+    //宿主执行了onstart时，会分发该事件
+    @OnLifecycleEvent(Lifecycle.Event.ON_START)
+    void onStart(@NotNull LifecycleOwner owner){
+      //开启定位
+    }
+  
+  //宿主执行了onstop时 会分发该事件
+  @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
+  void onStop(@NotNull LifecycleOwner owner){
+     //停止定位
+  }
+ }
+
+//2. 注册观察者,观察宿主生命周期状态变化
+class MyFragment extends Fragment{
+  public void onCreate(Bundle bundle){
+    LocationObserver observer =new LocationObserver()
+    getLifecycle().addObserver(observer);
+  }
+ }
+ 
+ 
+ FullLifecyclerObserver 拥有宿主所有生命周期事件：
+
+//1.源码，目前这个类权限不可见，即便如此，我们也要了解它
+interface FullLifecycleObserver extends LifecycleObserver {
+    void onCreate(LifecycleOwner owner);
+    void onStart(LifecycleOwner owner);
+    void onResume(LifecycleOwner owner);
+    void onPause(LifecycleOwner owner);
+    void onStop(LifecycleOwner owner);
+    void onDestroy(LifecycleOwner owner);
+}
+//2.用法,需要监听那个事件，复写那个方法即可
+class LocationObserver extends FullLifecycleObserver{
+    void onStart(LifecycleOwner owner){}
+    void onStop(LifecycleOwner owner){}
+}
+
+LifecycleEventObserver宿主生命周期事件封装成 Lifecycle.Event
+
+//1.源码
+public interface LifecycleEventObserver extends LifecycleObserver {
+    void onStateChanged(LifecycleOwner source, Lifecycle.Event event);
+}
+//2.用法 
+class LocationObserver extends LifecycleEventObserver{
+    @override
+    void onStateChanged(LifecycleOwner source, Lifecycle.Event event){
+      //需要自行判断life-event是onstart, 还是onstop
+    }
+}
+
+上面的这三种 Lifecycle 写法,比较推荐第二、第三种，因为第一种你虽然用注解很爽，但是如果没有添加 lifecycle-compiler 这个注解处理器的话，
+运行时会使用反射的形式回调到对应的方法上。
+
+*Fragment 是如何实现 Lifecycle 的？
+使用 Fragment 实现 Lifecycle 需要在各个生命周期方法内利用LifecycleRegistry分发相应的事件给每个观察者，以实现生命周期观察的能力：
+
+public class Fragment implements LifecycleOwner {
+LifecycleRegistry mLifecycleRegistry = new LifecycleRegistry(this);
+  @Override
+  public Lifecycle getLifecycle() {  
+      //复写自LifecycleOwner,所以必须new LifecycleRegistry对象返回
+      return mLifecycleRegistry;
+  }
+  
+void performCreate(){
+     mLifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE);
+  }
+  
+ void performStart(){
+     mLifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START);
+  }
+  .....
+ void performResume(){
+     mLifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME);
+  }  
+}
+LifecycleOwner、Lifecycle、LifecycleRegistry 的关系
+事件在分发宿主生命周期事件的流程中涉及到三个类，我们分别来捋一捋：
+
+LifecycleOwner：我们的 Activity/Fragment 都实现了该接口，用以声明它是一个能够提供生命周期事件的宿主。同时必须复写getLifecycle()方法提供一个Lifecycle对象；
+
+Lifecycle：是一个抽象类，里面定义了两个枚举State宿主的状态，Event 需要分发的事件的类型；
+
+LifecycleRegistry: 是 Lifecycle 的唯一实现类，主要用来负责注册 Observer，以及分发宿主状态事件给它们。
+
+*Activity是如何实现Lifecycle的？
+Activity 实现 Lifecycle 需要借助于 ReportFragment 往 Activity 上添加一个 fragment 用以报告生命周期的变化。目的是为了兼顾不是继承自 AppCompactActivity 的场景，
+同时也支持我们自定义 LifecycleOwner 的场景，注意了，这点面试会考！！！。
